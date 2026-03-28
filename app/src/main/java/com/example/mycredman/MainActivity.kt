@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val credIdEnc = requestInfo?.getString("credId")
-            val requestJson = Json.decodeFromString<GetPublicKeyCredentialRequestJson>(publicKeyRequests[0].requestJson)
+            val requestJson = (Json {ignoreUnknownKeys = true}).decodeFromString<GetPublicKeyCredentialRequestJson>(publicKeyRequests[0].requestJson)
             Log.d("MainActivity", "onCreate rpid:${requestJson.rpId}")
             Log.d("MainActivity", "${credIdEnc}")
 
@@ -309,10 +309,8 @@ class MainActivity : AppCompatActivity() {
             .setSubtitle("Create passkey for ${request.rp.name}")
             .setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG
-                /* or BiometricManager.Authenticators.DEVICE_CREDENTIAL */
+                or BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
-            .setNegativeButtonText("Cancel")
-
             .build()
         biometricPrompt.authenticate(promptInfo)
     }
@@ -429,9 +427,8 @@ class MainActivity : AppCompatActivity() {
             .setSubtitle("Use passkey for ${request.rpId}")
             .setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG
-                /* or BiometricManager.Authenticators.DEVICE_CREDENTIAL */
+                or BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
-            .setNegativeButtonText("Cancel") // this needs to be added when using BIOMETRIC
             .build()
         biometricPrompt.authenticate(promptInfo)
     }

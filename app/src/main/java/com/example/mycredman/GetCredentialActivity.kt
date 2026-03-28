@@ -44,7 +44,7 @@ class GetCredentialActivity : AppCompatActivity() {
         }
 
         val credIdEnc = requestInfo?.getString("credId")
-        val requestJson = Json.decodeFromString<GetPublicKeyCredentialRequestJson>(publicKeyRequests[0].requestJson)
+        val requestJson = (Json {ignoreUnknownKeys = true}).decodeFromString<GetPublicKeyCredentialRequestJson>(publicKeyRequests[0].requestJson)
         Log.d("GetCredActivity", "rpid: ${requestJson.rpId}")
 
 // Get the saved passkey from your database based on the credential ID
@@ -137,7 +137,7 @@ class GetCredentialActivity : AppCompatActivity() {
             .setSubtitle("Use passkey for ${request.rpId}")
             .setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG
-                /* or BiometricManager.Authenticators.DEVICE_CREDENTIAL */
+                or BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
             .build()
         biometricPrompt.authenticate(promptInfo)
