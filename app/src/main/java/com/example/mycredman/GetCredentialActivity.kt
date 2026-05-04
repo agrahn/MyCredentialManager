@@ -4,8 +4,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
@@ -71,8 +69,6 @@ class GetCredentialActivity : AppCompatActivity() {
             privateKey!!
         )
 
-
-
     }
 
 
@@ -80,67 +76,34 @@ class GetCredentialActivity : AppCompatActivity() {
         val request = PublicKeyCredentialRequestOptions(requestJson)
         val privateKey: ECPrivateKey = convertPrivateKey(privateKeyBytes)
 
-        val biometricPrompt = BiometricPrompt(
-            this,
-            this.mainExecutor,
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationError(
-                errorCode: Int, errString: CharSequence
-            ) {
-                super.onAuthenticationError(errorCode, errString)
-                finish()
-            }
-
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                finish()
-            }
-
-            override fun onAuthenticationSucceeded(
-                result: BiometricPrompt.AuthenticationResult
-            ) {
-                super.onAuthenticationSucceeded(result)
-                val response = AuthenticatorAssertionResponse(
-                    requestOptions = request,
-                    credentialId = credId,
-                    origin = origin,
-                    up = true,
-                    uv = true,
-                    be = true,
-                    bs = true,
-                    userHandle = uid,
-                    packageName = packageName
-                )
-
-                val sig = Signature.getInstance("SHA256withECDSA")
-                sig.initSign(privateKey)
-                sig.update(response.dataToSign())
-                response.signature = sig.sign()
-
-                val credential = FidoPublicKeyCredential(
-                    rawId = credId, response = response
-                    , authenticatorAttachment = "platform")
-                Log.d("GetCredActivity", "+++ credential.json(): "+ credential.json())
-                val result = Intent()
-                val passkeyCredential = PublicKeyCredential(credential.json())
-                PendingIntentHandler.setGetCredentialResponse(
-                    result, GetCredentialResponse(passkeyCredential)
-                )
-                setResult(RESULT_OK, result)
-                finish()
-            }
-        }
+        val response = AuthenticatorAssertionResponse(
+            requestOptions = request,
+            credentialId = credId,
+            origin = origin,
+            up = true,
+            uv = true,
+            be = true,
+            bs = true,
+            userHandle = uid,
+            packageName = packageName
         )
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Use your screen lock")
-            .setSubtitle("Use passkey for ${request.rpId}")
-            .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG
-                or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            )
-            .build()
-        biometricPrompt.authenticate(promptInfo)
+        val sig = Signature.getInstance("SHA256withECDSA")
+        sig.initSign(privateKey)
+        sig.update(response.dataToSign())
+        response.signature = sig.sign()
+
+        val credential = FidoPublicKeyCredential(
+            rawId = credId, response = response
+            , authenticatorAttachment = "platform")
+        Log.d("GetCredActivity", "+++ credential.json(): "+ credential.json())
+        val result = Intent()
+        val passkeyCredential = PublicKeyCredential(credential.json())
+        PendingIntentHandler.setGetCredentialResponse(
+            result, GetCredentialResponse(passkeyCredential)
+        )
+        setResult(RESULT_OK, result)
+        finish()
     }
 
 
