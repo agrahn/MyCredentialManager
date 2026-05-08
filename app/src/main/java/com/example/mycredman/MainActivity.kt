@@ -313,9 +313,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     // https://developer.android.com/training/sign-in/credential-provider#passkeys-implement
-    fun validatePasskey(requestJson:String, origin:String, packageName:String, uid:ByteArray, username:String, credId:ByteArray, privateKey: PrivateKey, clientDataHash: ByteArray?){
+    fun validatePasskey(
+        requestJson: String,
+        origin: String,
+        packageName: String,
+        uid: ByteArray,
+        username: String,
+        credId: ByteArray,
+        privateKey: PrivateKey,
+        clientDataHash: ByteArray?
+    ) {
         val request = PublicKeyCredentialRequestOptions(requestJson)
-
+    
         val response = AuthenticatorAssertionResponse(
             requestOptions = request,
             credentialId = credId,
@@ -325,33 +334,54 @@ class MainActivity : AppCompatActivity() {
             be = true,
             bs = true,
             userHandle = uid,
-//            packageName = packageName
             clientDataHash = clientDataHash
         )
-
+    
         Log.d("MainActivity", "response.dataToSign(): ${CredmanUtils.b64Encode(response.dataToSign())}")
-
-        val sig = Signature.getInstance("Ed25519")
-        sig.initSign(privateKey)
-        sig.update(response.dataToSign())
-        response.signature = sig.sign()
-
+    
+        // Try signature algorithms in order of preference
+        val signatureAlgorithms = listOf("Ed25519", "SHA256withECDSA", "SHA256withRSA")
+        var signature: ByteArray? = null
+    
+        for (algorithm in signatureAlgorithms) {
+            try {
+                Log.d("MainActivity", "Trying signature algorithm: $algorithm")
+                val sig = Signature.getInstance(algorithm)
+                sig.initSign(privateKey)
+                sig.update(response.dataToSign())
+                signature = sig.sign()
+                Log.d("MainActivity", "Successfully signed with algorithm: $algorithm")
+                break
+            } catch (e: Exception) {
+                Log.d("MainActivity", "Algorithm $algorithm failed: ${e.message}")
+                continue
+            }
+        }
+    
+        if (signature == null) {
+            Log.e("MainActivity", "Failed to sign with any supported algorithm")
+            return
+        }
+    
+        response.signature = signature
+    
         val credential = FidoPublicKeyCredential(
-            rawId = credId, response = response
-            , authenticatorAttachment = "platform")
-
-        Log.d("MainActivity", "+++ credential.json(): "+ credential.json())
-//        var credentialJson = credential.json()
-
+            rawId = credId,
+            response = response,
+            authenticatorAttachment = "platform"
+        )
+    
+        Log.d("MainActivity", "+++ credential.json(): " + credential.json())
+    
         // add clientDataJSON to the response
-        val clientDataJSONb64 = getClientDataJSONb64(origin, CredmanUtils.b64Encode( request.challenge))
+        val clientDataJSONb64 = getClientDataJSONb64(origin, CredmanUtils.b64Encode(request.challenge))
         val delimiter = "response\":{"
-        val credentialJson = credential.json().substringBeforeLast(delimiter)+ delimiter +
-                "\"clientDataJSON\":\"$clientDataJSONb64\","+
+        val credentialJson = credential.json().substringBeforeLast(delimiter) + delimiter +
+                "\"clientDataJSON\":\"$clientDataJSONb64\"," +
                 credential.json().substringAfterLast(delimiter)
-
-        Log.d("MainActivity", "+++ credentialJson: "+ credentialJson)
-
+    
+        Log.d("MainActivity", "+++ credentialJson: " + credentialJson)
+    
         val result = Intent()
         val passkeyCredential = PublicKeyCredential(credentialJson)
         PendingIntentHandler.setGetCredentialResponse(
@@ -360,7 +390,6 @@ class MainActivity : AppCompatActivity() {
         setResult(RESULT_OK, result)
         finish()
     }
-
 
     private fun getClientDataJSONb64(origin: String,challenge:String): String {
 
