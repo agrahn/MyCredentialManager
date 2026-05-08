@@ -43,14 +43,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.math.BigInteger
 import java.security.KeyPair
+import java.security.PrivateKey
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Signature
-import java.security.interfaces.ECPrivateKey
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECGenParameterSpec
-import java.security.spec.ECPoint
 
 class MainActivity : AppCompatActivity() {
 
@@ -101,7 +98,7 @@ class MainActivity : AppCompatActivity() {
             val credId = CredmanUtils.b64Decode(credIdEnc)
             val rpid = CredmanUtils.validateRpId(getRequest.callingAppInfo,requestJson.rpId)
             val passkey = MyCredentialDataManager.load(this,rpid,credId!!)
-            val privateKey = passkey!!.keyPair!!.private as ECPrivateKey
+            val privateKey = passkey!!.keyPair!!.private
             val uid = passkey.userHandle
             val origin = CredmanUtils.appInfoToOrigin(getRequest.callingAppInfo)
             val packageName = getRequest.callingAppInfo.packageName
@@ -217,10 +214,8 @@ class MainActivity : AppCompatActivity() {
         SecureRandom().nextBytes(credentialId)
 
         // Generate a credential key pair
-        val spec = ECGenParameterSpec("secp256r1")
-        val keyPairGen = KeyPairGenerator.getInstance("EC")
-        keyPairGen.initialize(spec)
-        val keyPair = keyPairGen.genKeyPair()
+        val keyPairGen = KeyPairGenerator.getInstance("Ed25519")
+        val keyPair = keyPairGen.generateKeyPair()
 
 
         // check if rpid is a subdomain of origin
@@ -275,16 +270,26 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-    private fun populateEasyAccessorFields(json: String, rpid:String , keyPair: KeyPair, credentialId: ByteArray):String{
-        Log.d("MainActivity","=== populateEasyAccessorFields BEFORE === "+ json)
+    private fun populateEasyAccessorFields(json: String, rpid: String, keyPair: KeyPair, credentialId: ByteArray): String {
+        Log.d("MainActivity", "=== populateEasyAccessorFields BEFORE === " + json)
         val response = Json.decodeFromString<CreatePublicKeyCredentialResponseJson>(json)
-        response.response.publicKeyAlgorithm = -7 // ES256
-        response.response.publicKey = CredmanUtils.b64Encode(keyPair.public.encoded)
+    
+        // EdDSA algorithm ID
+        response.response.publicKeyAlgorithm = -8
+    
+        // Extract raw 32-byte Ed25519 public key
+        val encodedKey = keyPair.public.encoded
+        val rawKeyBytes = if (encodedKey.size >= 32) {
+            encodedKey.sliceArray((encodedKey.size - 32) until encodedKey.size)
+        } else {
+            byteArrayOf()
+        }
+    
+        response.response.publicKey = CredmanUtils.b64Encode(rawKeyBytes)
         response.response.authenticatorData = getAuthData(rpid, credentialId, keyPair)
-
-        Log.d("MainActivity","=== populateEasyAccessorFields AFTER === "+ Json.encodeToString(response))
+    
+        Log.d("MainActivity", "=== populateEasyAccessorFields AFTER === " + Json.encodeToString(response))
         return Json.encodeToString(response)
-
     }
 
     private fun getAuthData(rpid:String, credentialRawId:ByteArray, keyPair: KeyPair ):String{
@@ -308,7 +313,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // https://developer.android.com/training/sign-in/credential-provider#passkeys-implement
-    fun validatePasskey(requestJson:String, origin:String, packageName:String, uid:ByteArray, username:String, credId:ByteArray, privateKey: ECPrivateKey, clientDataHash: ByteArray?){
+    fun validatePasskey(requestJson:String, origin:String, packageName:String, uid:ByteArray, username:String, credId:ByteArray, privateKey: PrivateKey, clientDataHash: ByteArray?){
         val request = PublicKeyCredentialRequestOptions(requestJson)
 
         val response = AuthenticatorAssertionResponse(
@@ -326,7 +331,7 @@ class MainActivity : AppCompatActivity() {
 
         Log.d("MainActivity", "response.dataToSign(): ${CredmanUtils.b64Encode(response.dataToSign())}")
 
-        val sig = Signature.getInstance("SHA256withECDSA")
+        val sig = Signature.getInstance("Ed25519")
         sig.initSign(privateKey)
         sig.update(response.dataToSign())
         response.signature = sig.sign()
@@ -394,37 +399,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getPublicKeyFromKeyPair(keyPair: KeyPair?): ByteArray {
-        // credentialPublicKey CBOR
-        if (keyPair==null) return ByteArray(0)
-        if (keyPair.public !is ECPublicKey) return ByteArray(0)
+      // credentialPublicKey CBOR for Ed25519
+      if (keyPair == null) return ByteArray(0)
 
-        val ecPubKey = keyPair.public as ECPublicKey
-        val ecPoint: ECPoint = ecPubKey.w
+      // Extract the raw 32-byte Ed25519 public key from the encoded form
+      val encodedKey = keyPair.public.encoded
 
-        // for now, only covers ES256
-        if (ecPoint.affineX.bitLength() > 256 || ecPoint.affineY.bitLength() > 256) return ByteArray(0)
+      // Ed25519 public keys in X.509 format have the raw 32 bytes at the end
+      // Structure: SEQUENCE { SEQUENCE { OID }, BIT STRING { raw key } }
+      // We need to extract just the 32-byte key
+      val rawKeyBytes = if (encodedKey.size >= 32) {
+          encodedKey.sliceArray((encodedKey.size - 32) until encodedKey.size)
+      } else {
+          return ByteArray(0)
+      }
 
-        val byteX = bigIntToByteArray32(ecPoint.affineX)
-        val byteY = bigIntToByteArray32(ecPoint.affineY)
+      // CBOR encoding for Ed25519:
+      // A4 = map with 4 items
+      // 01 = key 1 (kty: Key Type)
+      // 01 = value 1 (OKP: Octet string key pairs)
+      // 03 = key 3 (alg: Algorithm)
+      // 27 = value -8 (EdDSA)
+      // -1 (20 in CBOR) = key -1 (crv: Curve)
+      // 06 = value 6 (Ed25519)
+      // -2 (21 in CBOR) = key -2 (x: public key coordinate)
+      // 58 20 = byte string of length 32
+      // [32 bytes of key]
 
-        // refer to RFC9052 Section 7 for details
-        return "A5010203262001215820".chunked(2).map { it.toInt(16).toByte() }.toByteArray() +
-                byteX+
-                "225820".chunked(2).map { it.toInt(16).toByte() }.toByteArray() +
-                byteY
-    }
+      val cborHeader = byteArrayOf(
+          0xA4.toByte(),        // Map with 4 entries
+          0x01,                 // key: 1 (kty)
+          0x01,                 // value: 1 (OKP)
+          0x03,                 // key: 3 (alg)
+          0x27,                 // value: -8 (EdDSA)
+          0x20,                 // key: -1 (crv)
+          0x06,                 // value: 6 (Ed25519)
+          0x21,                 // key: -2 (x)
+          0x58, 0x20.toByte()   // byte string, length 32
+      )
 
-    private fun bigIntToByteArray32(bigInteger: BigInteger):ByteArray{
-        var ba = bigInteger.toByteArray()
-
-        if(ba.size < 32) {
-            // append zeros in front
-            ba = ByteArray(32) + ba
-        }
-        // get the last 32 bytes as bigint conversion sometimes put extra zeros at front
-        return ba.copyOfRange(ba.size - 32, ba.size)
-    }
-
+      return cborHeader + rawKeyBytes
+    } 
 
 }
 
