@@ -1,5 +1,6 @@
 package com.example.mycredman
 
+import android.util.Base64
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
@@ -49,6 +50,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Signature
 
+@OptIn(kotlin.ExperimentalStdlibApi::class)
 class MainActivity : AppCompatActivity() {
 
     private val EXTRA_KEY_ACCOUNT_ID  = "com.example.mycredman.extra.EXTRA_KEY_ACCOUNT_ID"
@@ -95,7 +97,7 @@ class MainActivity : AppCompatActivity() {
             
             // Decode the credential ID, private key and user ID
 
-            val credId = CredmanUtils.b64Decode(credIdEnc)
+            val credId = Base64.decode(credIdEnc, Base64.URL_SAFE)
             val rpid = CredmanUtils.validateRpId(getRequest.callingAppInfo,requestJson.rpId)
             val passkey = MyCredentialDataManager.load(this,rpid,credId!!)
             val privateKey = passkey!!.keyPair!!.private
@@ -103,7 +105,7 @@ class MainActivity : AppCompatActivity() {
             val origin = CredmanUtils.appInfoToOrigin(getRequest.callingAppInfo)
             val packageName = getRequest.callingAppInfo.packageName
             val clientDataHash = publicKeyRequests[0].requestData.getByteArray("androidx.credentials.BUNDLE_KEY_CLIENT_DATA_HASH")
-            Log.d("MainActivity","+++ clientDataHash: "+CredmanUtils.b64Encode(clientDataHash!!))
+            Log.d("MainActivity","+++ clientDataHash: "+Base64.encodeToString(clientDataHash!!, Base64.URL_SAFE or Base64.NO_PADDING))
 
             validatePasskey(
                 publicKeyRequests[0].requestJson,
@@ -285,7 +287,7 @@ class MainActivity : AppCompatActivity() {
             byteArrayOf()
         }
     
-        response.response.publicKey = CredmanUtils.b64Encode(rawKeyBytes)
+        response.response.publicKey = Base64.encodeToString(rawKeyBytes, Base64.URL_SAFE or Base64.NO_PADDING)
         response.response.authenticatorData = getAuthData(rpid, credentialId, keyPair)
     
         Log.d("MainActivity", "=== populateEasyAccessorFields AFTER === " + Json.encodeToString(response))
@@ -293,6 +295,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getAuthData(rpid:String, credentialRawId:ByteArray, keyPair: KeyPair ):String{
+        /**
+         * https://github.com/passkeydeveloper/passkey-authenticator-aaguids, to be superseeded by
+         * FIDO Alliance Metadata Service (MDS) at some point in the future https://fidoalliance.org/metadata
+         * (not mandatory)
+         */
         val AAGUID = "00000000000000000000000000000000"
         check(AAGUID.length % 2 == 0) { "AAGUID Must have an even length" }
 
@@ -301,15 +308,13 @@ class MainActivity : AppCompatActivity() {
 
         val flags: ByteArray = byteArrayOf(0x5d.toByte())
         val signCount:ByteArray = byteArrayOf(0x00, 0x00, 0x00, 0x00)
-        val aaguid = AAGUID.chunked(2)
-            .map { it.toInt(16).toByte() }
-            .toByteArray()
+        val aaguid = AAGUID.hexToByteArray()
         val credentialIdLength:ByteArray = byteArrayOf(0x00, credentialRawId.size.toByte()) // = 20 bytes
         // val credentialId
         val credentialPublicKey:ByteArray =getPublicKeyFromKeyPair(keyPair)
 
         val retVal = rpIdHash + flags + signCount + aaguid + credentialIdLength + credentialRawId + credentialPublicKey
-        return CredmanUtils.b64Encode(retVal)
+        return Base64.encodeToString(retVal, Base64.URL_SAFE or Base64.NO_PADDING)
     }
 
     // https://developer.android.com/training/sign-in/credential-provider#passkeys-implement
@@ -337,7 +342,7 @@ class MainActivity : AppCompatActivity() {
             clientDataHash = clientDataHash
         )
     
-        Log.d("MainActivity", "response.dataToSign(): ${CredmanUtils.b64Encode(response.dataToSign())}")
+        Log.d("MainActivity", "response.dataToSign(): ${Base64.encodeToString(response.dataToSign(), Base64.URL_SAFE or Base64.NO_PADDING)}")
     
         // Try signature algorithms in order of preference
         val signatureAlgorithms = listOf("Ed25519", "SHA256withECDSA", "SHA256withRSA")
@@ -374,7 +379,7 @@ class MainActivity : AppCompatActivity() {
         Log.d("MainActivity", "+++ credential.json(): " + credential.json())
     
         // add clientDataJSON to the response
-        val clientDataJSONb64 = getClientDataJSONb64(origin, CredmanUtils.b64Encode(request.challenge))
+        val clientDataJSONb64 = getClientDataJSONb64(origin, Base64.encodeToString(request.challenge, Base64.URL_SAFE or Base64.NO_PADDING))
         val delimiter = "response\":{"
         val credentialJson = credential.json().substringBeforeLast(delimiter) + delimiter +
                 "\"clientDataJSON\":\"$clientDataJSONb64\"," +
@@ -399,9 +404,8 @@ class MainActivity : AppCompatActivity() {
             "{\"type\":\"webauthn.get\",\"challenge\":\"$challenge\",\"origin\":\"$origin\",\"crossOrigin\":false}"
         val jsonByteArray = jsonString.toByteArray()
         Log.d("MainActivity","+++ ClientDataJSON: $jsonString")
-        return CredmanUtils.b64Encode(jsonByteArray)
+        return Base64.encodeToString(jsonByteArray, Base64.URL_SAFE or Base64.NO_PADDING)
     }
-
 
     @Serializable
     private data class CreatePublicKeyCredentialResponseJson(
@@ -454,18 +458,7 @@ class MainActivity : AppCompatActivity() {
       // -2 (21 in CBOR) = key -2 (x: public key coordinate)
       // 58 20 = byte string of length 32
       // [32 bytes of key]
-
-      val cborHeader = byteArrayOf(
-          0xA4.toByte(),        // Map with 4 entries
-          0x01,                 // key: 1 (kty)
-          0x01,                 // value: 1 (OKP)
-          0x03,                 // key: 3 (alg)
-          0x27,                 // value: -8 (EdDSA)
-          0x20,                 // key: -1 (crv)
-          0x06,                 // value: 6 (Ed25519)
-          0x21,                 // key: -2 (x)
-          0x58, 0x20.toByte()   // byte string, length 32
-      )
+      val cborHeader = "A4010103272006215820".hexToByteArray()
 
       return cborHeader + rawKeyBytes
     } 
